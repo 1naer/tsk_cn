@@ -1,0 +1,18 @@
+{
+  "formatVersion": 9,
+  "runtimeRid": "android-arm64",
+  "deploymentFiles": [
+    {
+      "path": "Mods/TSKHook/TSKHook.dll",
+      "policy": "refresh"
+    },
+    {
+      "path": "Mods/TSKHook/Utility.dll",
+      "policy": "refresh"
+    },
+    {
+      "path": "UserData/TSKHook/notosanscjktc",
+      "policy": "upgrade"
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "_comment": "《星骑士》汉化合包仓库配置。所有路径相对仓库根。",
+  "game": {
+    "name": "Twinkle Star Knights / クルスタX",
+    "official_package": "jp.co.fanzagames.twinklestarknightsx_a",
+    "mod_suffix": ".mod",
+    "abi": "arm64-v8a",
+    "min_android_api": 30
+  },
+  "source": {
+    "_comment": "输入优先级：1) 环境变量 TSK_SOURCE_APK 指定的本地文件 2) work/input/*.apk 3) 上游 API 自动下载",
+    "upstream_api": "https://api.ntr.best/modding/android/mod/twinklestarknights",
+    "upstream_download_api": "https://api.ntr.best/modding/android/mod/twinklestarknights/download",
+    "allow_upstream_download": false,
+    "prefer_local": true
+  },
+  "required_entries": [
+    "AndroidManifest.xml",
+    "classes.dex",
+    "lib/arm64-v8a/libil2cpp.so",
+    "lib/arm64-v8a/libunity.so",
+    "assets/bin/Data/Managed/Metadata/global-metadata.dat"
+  ],
+  "compat": {
+    "_comment": "游戏更新后必须仍存在的 IL2CPP 侧类型/方法。缺失任一项 => 构建失败，不发布。命名空间留空表示只匹配类型名。",
+    "required_types": [
+      { "namespace": "Il2CppUtage", "name": "AdvPage", "critical": true },
+      { "namespace": "Il2CppUtage", "name": "AdvDataManager", "critical": true },
+      { "namespace": "Il2CppUtage", "name": "UguiNovelText", "critical": true },
+      { "namespace": "Il2CppUtage", "name": "AdvBacklog", "critical": true },
+      { "namespace": "Il2CppUtage", "name": "LanguageManagerBase", "critical": true },
+      { "namespace": "Il2Cpp", "name": "GameConfig", "critical": true },
+      { "namespace": "Il2Cpp", "name": "MaximizeCharaView", "critical": false },
+      { "namespace": "", "name": "AdvPage", "critical": false }
+    ],
+    "required_members": [
+      { "type": "AdvPage", "member": "Update", "critical": false },
+      { "type": "AdvDataManager", "member": "GetScenario", "critical": false },
+      { "type": "UguiNovelText", "member": "set_text", "critical": false },
+      { "type": "AdvBacklog", "member": "AddBacklog", "critical": false }
+    ],
+    "min_type_hit_ratio": 0.85
+  },
+  "lemon": {
+    "static_dir": "static/lemon",
+    "payload": "static/lemon/payload.json",
+    "libmain": "static/libmain/libmain.so",
+    "apk_asset_dest": "assets/LemonLoader",
+    "interop_dir": "static/lemon/runtime/interop",
+    "interop_generated_dir": "work/interop"
+  },
+  "float_window": {
+    "_comment": "ARTEAM 悬浮窗。dex 放 smali_classes3，so 放 lib/arm64-v8a，入口在 UnityPlayerActivity.onCreate 尾部延迟 6 秒调用。",
+    "dex_dir": "static/float",
+    "dex_files": ["classes.dex", "classes2.dex"],
+    "native_dir": "static/float/lib/arm64-v8a",
+    "native_files": [
+      "libandroidrepublic.so",
+      "libemtandroidrepublic.so",
+      "libemtandroidrepublic2.so",
+      "libxg4.so"
+    ],
+    "entry_activity_smali": "com/unity3d/player/UnityPlayerActivity",
+    "entry_class": "com/android/support/KonataInit",
+    "entry_call": "KonataInit;->init(Landroid/app/Activity;)V",
+    "delay_ms": 6000,
+    "permissions": ["android.permission.SYSTEM_ALERT_WINDOW"],
+    "do_not_declare_service": true
+  },
+  "patch_libs": {
+    "_comment": "通过 DT_NEEDED 链式挂载唤醒悬浮窗，禁止替换 libmain.so",
+    "target": "lib/arm64-v8a/libunity.so",
+    "add_needed": ["libxg4.so", "libandroidrepublic.so"],
+    "forbidden_replace": ["lib/arm64-v8a/libmain.so"]
+  },
+  "signing": {
+    "keystore": "keystore/tsk_fixed.keystore",
+    "alias": "tsk_fixed_key",
+    "store_type": "PKCS12",
+    "cert_sha256": "a3ced4efa8d662f5e6eb045976e804e62eafeaf9561456fa28ad815dfa682f56",
+    "v1": true,
+    "v2": true,
+    "v3": true,
+    "zipalign": "-p -f -v 4"
+  },
+  "output": {
+    "dir": "dist",
+    "name_template": "TSK_{version}_cn_float.apk",
+    "report": "dist/build_report.json"
+  }
+}
