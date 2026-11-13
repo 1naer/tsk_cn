@@ -64,7 +64,9 @@ jobs:
           BT_VER="34.0.0"
           ANDROID_HOME="${{ runner.temp }}/android-sdk"
           mkdir -p "$ANDROID_HOME/build-tools"
-          BT_URL="https://dl.google.com/android/repository/build-tools_r${BT_VER}-linux.zip"
+          # 注意：dl.google.com 已下架 build-tools_r34.0.0-linux.zip（404），
+          # 必须使用等价的 build-tools_r34-linux.zip（同为 34.0.0，解压目录为 android-14）
+          BT_URL="https://dl.google.com/android/repository/build-tools_r34-linux.zip"
           echo "下载 Android build-tools ${BT_VER}..."
           curl -fL --retry 5 -o /tmp/bt.zip "$BT_URL"
           unzip -q /tmp/bt.zip -d /tmp/bt
