@@ -43,15 +43,22 @@ python3 scripts/03_check_compat.py    # 兼容性门禁
 - `00_preflight.sh` 中签名密码从环境变量 `TSK_KS_PASS` 读取，CI 用 secret 注入
 - `work/`、`builds/`、`dist/` 构建产物均不入库
 
-## 推送到远程
+## 推送到远程（推荐交互式，免记忆变量）
 
 ```bash
-# GitHub
-GH_TOKEN=<token> GH_REPO=<用户名>/<仓库名> bash push_to_github.sh
-
-# 或 Gitee（国内可直连）
-GITEE_USER=<用户名> GITEE_TOKEN=<token> GITEE_REPO=<用户名>/<仓库名> bash push_to_github.sh
+bash push.sh
 ```
+
+运行后脚本会用中文依次问你 3 个问题，照着回答即可：
+
+1. **选择平台**：1=GitHub，2=Gitee（国内直连）
+2. **仓库地址**：填 `用户名/仓库名`（不是完整 URL）
+3. **访问令牌（Token）**：输入不显示，防泄露
+
+脚本会自动处理推送，并在成功后清理 Token（不留在 .git/config 里）。
+
+> 前置：在 GitHub/Gitee 的「设置 → 私人令牌」里生成一个 Token，
+> 仓库权限需允许写入（Contents: Read and write）。
 
 ## 构建状态
 
