@@ -130,6 +130,7 @@ jobs:
           VER: ${{ steps.check.outputs.ver }}
         run: |
           set -euo pipefail
+          mkdir -p dist
           OUT="dist/TSK_${VER}_cn_float.apk"
           python3 scripts/02_assemble.py work/official.apk "$OUT"
           ls -l "$OUT"
