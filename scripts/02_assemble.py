@@ -282,6 +282,10 @@ def inject_activity_entry(dest: str):
     os.makedirs(smali_out)
     dex_path = os.path.join(dest, target_dex)
     print("  baksmali 反编译中（约 40s）...")
+    if not shutil.which("baksmali") or not shutil.which("smali"):
+        print("  [FAIL] 缺少 baksmali/smali（CI 需安装 libsmali-java），无法注入 Activity 启动入口")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        sys.exit(1)
     r = subprocess.run(["baksmali", "disassemble", dex_path, "-o", smali_out],
                        capture_output=True, text=True, timeout=180)
     if r.returncode != 0:

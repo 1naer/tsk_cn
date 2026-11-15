@@ -56,11 +56,20 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 安装构建工具（patchelf + zipalign + aapt）
+      - name: 安装构建工具（patchelf + zipalign + aapt + smali/baksmali）
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq patchelf >/dev/null 2>&1
+          # baksmali / smali：注入 UnityPlayerActivity 启动入口（KonataInit）必需。
+          # Ubuntu universe 的 libsmali-java 同时提供 /usr/bin/baksmali 与 /usr/bin/smali（纯 Java，架构无关）。
+          sudo apt-get install -y -qq libsmali-java >/dev/null 2>&1 || true
+          if ! command -v baksmali >/dev/null 2>&1 || ! command -v smali >/dev/null 2>&1; then
+            echo "::error::baksmali/smali 安装失败（libsmali-java），无法注入 Activity 启动入口"
+            exit 1
+          fi
+          baksmali --version 2>&1 | head -1 || true
+          smali --version 2>&1 | head -1 || true
           # zipalign / aapt 来自 Android build-tools，下载最小构建工具包
           BT_VER="34.0.0"
           ANDROID_HOME="${{ runner.temp }}/android-sdk"
@@ -76,8 +85,29 @@ jobs:
           chmod +x "$ANDROID_HOME/build-tools/$BT_VER/"* 2>/dev/null || true
           echo "$ANDROID_HOME/build-tools/$BT_VER" >> "$GITHUB_PATH"
           echo "build-tools 已就位: $ANDROID_HOME/build-tools/$BT_VER"
-          zipalign -h 2>&1 | head -1 || true
-          aapt version 2>&1 | head -1 || true
+          # 本 step 内 GITHUB_PATH 尚未生效，直接导出以便真实验证 zipalign/aapt 可用
+          export PATH="$ANDROID_HOME/build-tools/$BT_VER:$PATH"
+          zipalign -h 2>&1 | head -1
+          aapt version 2>&1 | head -1
+          command -v zipalign >/dev/null || { echo "::error::zipalign 不可用"; exit 1; }
+          command -v aapt >/dev/null || { echo "::error::aapt 不可用"; exit 1; }
+
+      - name: 工具链自检（合包前 fail-fast）
+        run: |
+          set -euo pipefail
+          miss=""
+          for t in python3 java keytool unzip zip curl patchelf readelf zipalign aapt apksigner baksmali smali; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "  [OK] $t -> $(command -v "$t")"
+            else
+              echo "  [MISS] $t"
+              miss="$miss $t"
+            fi
+          done
+          if [ -n "$miss" ]; then
+            echo "::error::缺少合包/签名所需工具:$miss"
+            exit 1
+          fi
 
       - name: 准备签名密钥
         run: |
@@ -149,13 +179,25 @@ jobs:
           ls -l work/il2cpp/
 
           mkdir -p tools && cd tools
-          CPP2IL_REPO="${{ secrets.CPP2IL_REPO || 'Cpp2IL/Cpp2IL' }}"
+          # Cpp2IL 上游仓库已迁移（Cpp2IL/Cpp2IL 无 release 资产），默认用 SamboyCoding/Cpp2IL，
+          # 并逐个候选回退，避免因 404 直接退回静态 interop（新版本 IL2CPP 下静态 interop 可能不匹配 → 汉化静默失效）。
+          CPP2IL_REPO_OVERRIDE="${{ secrets.CPP2IL_REPO }}"
           CPP2IL_REF="${{ secrets.CPP2IL_REF }}"
-          if [ -n "$CPP2IL_REF" ]; then
-            URL="https://github.com/${CPP2IL_REPO}/releases/download/${CPP2IL_REF}/Cpp2IL.zip"
-          else
-            URL="https://github.com/${CPP2IL_REPO}/releases/latest/download/Cpp2IL.zip"
-          fi
+          CANDIDATES="${CPP2IL_REPO_OVERRIDE:-SamboyCoding/Cpp2IL} Cpp2IL/Cpp2IL"
+          URL=""
+          for R in $CANDIDATES; do
+            for A in Cpp2IL.zip Cpp2IL-Linux.zip; do
+              if [ -n "$CPP2IL_REF" ]; then
+                U="https://github.com/${R}/releases/download/${CPP2IL_REF}/${A}"
+              else
+                U="https://github.com/${R}/releases/latest/download/${A}"
+              fi
+              if curl -fsIL --retry 2 --max-time 60 "$U" >/dev/null 2>&1; then
+                URL="$U"; echo "Cpp2IL 来源: $U"; break 2
+              fi
+            done
+          done
+          [ -n "$URL" ] || { echo "::warning::Cpp2IL 下载地址探测失败，回退静态 interop"; exit 0; }
           curl -fL --retry 5 -o cpp2il.zip "$URL" || { echo "::warning::Cpp2IL 下载失败，回退静态 interop"; exit 0; }
           unzip -o cpp2il.zip >/dev/null 2>&1 || true
           CPP2IL_BIN=""
