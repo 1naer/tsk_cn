@@ -45,6 +45,8 @@
     "static_dir": "static/lemon",
     "payload": "static/lemon/payload.json",
     "libmain": "static/libmain/libmain.so",
+    "libmain_dmm": "static/lemon/libmain-dmm.so",
+    "apk_libmain_dest": "lib/arm64-v8a/libmain.so",
     "apk_asset_dest": "assets/LemonLoader",
     "interop_dir": "static/lemon/runtime/interop",
     "interop_generated_dir": "work/interop"
@@ -52,7 +54,7 @@
   "float_window": {
     "_comment": "ARTEAM 悬浮窗。dex 放 smali_classes3，so 放 lib/arm64-v8a，入口在 UnityPlayerActivity.onCreate 尾部延迟 6 秒调用。",
     "dex_dir": "static/float",
-    "dex_files": ["classes.dex", "classes2.dex"],
+    "dex_files": ["classes.dex", "classes2.dex", "classes3.dex"],
     "native_dir": "static/float/lib/arm64-v8a",
     "native_files": [
       "libandroidrepublic.so",
@@ -68,10 +70,9 @@
     "do_not_declare_service": true
   },
   "patch_libs": {
-    "_comment": "通过 DT_NEEDED 链式挂载唤醒悬浮窗，禁止替换 libmain.so",
+    "_comment": "通过 DT_NEEDED 链式挂载唤醒悬浮窗。注意：libmain.so 会被 LemonLoader stub 接管（stub 装到 lib/arm64-v8a/libmain.so，DMM 原版备份为 assets/LemonLoader/libmain.so），stub 再依 payload.json 拉起 .NET 运行时加载 TSKHook 汉化。因此 libmain.so 属于「必须替换」而非禁止替换。",
     "target": "lib/arm64-v8a/libunity.so",
-    "add_needed": ["libxg4.so", "libandroidrepublic.so"],
-    "forbidden_replace": ["lib/arm64-v8a/libmain.so"]
+    "add_needed": ["libxg4.so", "libandroidrepublic.so"]
   },
   "signing": {
     "keystore": "keystore/tsk_fixed.keystore",

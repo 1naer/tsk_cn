@@ -3,9 +3,10 @@
 # 作用：全自动闭环，无需人工干预——
 #   1. 定时（或手动）触发，通过 Vercel 代理调 DMM 官方 API 检测新版本
 #   2. 有新版本则拉取官方 APK，校验包名/版本/哈希
-#   3. 合包（LemonLoader + ARTEAM 悬浮窗 + libunity patchelf 修补）
-#   4. zipalign + apksigner 用固定密钥签名（V1+V2+V3）
-#   5. 自动发布到 GitHub Release，APK 作为可下载资产
+#   3. 按新版 IL2CPP 重新生成 interop（提取 libil2cpp.so + global-metadata.dat → Cpp2IL → 按旧清单安全筛选），失败则回退仓库内静态 interop
+#   4. 合包（LemonLoader + payload.json + .NET 运行时 + ARTEAM 悬浮窗 + libunity patchelf 修补）
+#   5. zipalign + apksigner 用固定密钥签名（V1+V2+V3）
+#   6. 自动发布到 GitHub Release，APK 作为可下载资产
 #
 # 触发方式：
 #   - schedule：每天 03:17 UTC 自动检测一次（DMM 更新后最迟当天拿到）
@@ -123,6 +124,56 @@ jobs:
           set -euo pipefail
           aapt dump badging work/official.apk | grep "package:" | head -1
           sha256sum work/official.apk
+
+      - name: 安装 .NET SDK（供 Cpp2IL 生成 interop）
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 重新生成 interop（按新版 IL2CPP；失败自动回退静态 interop）
+        if: steps.check.outputs.skip == 'false'
+        continue-on-error: true
+        run: |
+          # 目标：产出 work/interop 供 02_assemble.py 的 inject_lemon 优先使用。
+          # 本步骤为「增强」而非「必需」：任何一步失败都回退到仓库内静态 interop，
+          # 绝不因为 interop 生成失败而阻断整条发布链（合包脚本会打印来源=静态）。
+          set -uo pipefail
+          ARCH=arm64-v8a
+          rm -rf work/interop work/il2cpp gen_out gen_interop_selected
+          mkdir -p work/il2cpp
+          unzip -j work/official.apk \
+            "lib/${ARCH}/libil2cpp.so" \
+            "assets/bin/Data/Managed/Metadata/global-metadata.dat" \
+            -d work/il2cpp/ || { echo "::warning::提取 IL2CPP 核心文件失败，回退静态 interop"; exit 0; }
+          ls -l work/il2cpp/
+
+          mkdir -p tools && cd tools
+          CPP2IL_REPO="${{ secrets.CPP2IL_REPO || 'Cpp2IL/Cpp2IL' }}"
+          CPP2IL_REF="${{ secrets.CPP2IL_REF }}"
+          if [ -n "$CPP2IL_REF" ]; then
+            URL="https://github.com/${CPP2IL_REPO}/releases/download/${CPP2IL_REF}/Cpp2IL.zip"
+          else
+            URL="https://github.com/${CPP2IL_REPO}/releases/latest/download/Cpp2IL.zip"
+          fi
+          curl -fL --retry 5 -o cpp2il.zip "$URL" || { echo "::warning::Cpp2IL 下载失败，回退静态 interop"; exit 0; }
+          unzip -o cpp2il.zip >/dev/null 2>&1 || true
+          CPP2IL_BIN=""
+          for c in Cpp2IL.dll Cpp2IL Cpp2IL.exe; do [ -f "$c" ] && CPP2IL_BIN="$c" && break; done
+          [ -n "$CPP2IL_BIN" ] || { echo "::warning::未找到 Cpp2IL 可执行文件，回退静态 interop"; exit 0; }
+          if [[ "$CPP2IL_BIN" == *.dll ]]; then
+            dotnet "$CPP2IL_BIN" -lib ../work/il2cpp/libil2cpp.so -metadata ../work/il2cpp/global-metadata.dat -output-dir ../gen_out \
+              || { echo "::warning::Cpp2IL 运行失败，回退静态 interop"; exit 0; }
+          else
+            "./$CPP2IL_BIN" -lib ../work/il2cpp/libil2cpp.so -metadata ../work/il2cpp/global-metadata.dat -output-dir ../gen_out \
+              || { echo "::warning::Cpp2IL 运行失败，回退静态 interop"; exit 0; }
+          fi
+          cd ..
+          python3 scripts/select_interop.py gen_out static/lemon/runtime/interop work/interop \
+            || { echo "::warning::interop 筛选失败，回退静态 interop"; rm -rf work/interop; exit 0; }
+          N=$(ls work/interop/*.dll 2>/dev/null | wc -l)
+          [ "$N" -gt 0 ] || { echo "::warning::重生成 interop 为空，回退静态 interop"; rm -rf work/interop; exit 0; }
+          echo "已重生成 interop: ${N} 个 DLL（合包时将标记 来源=重生成）"
 
       - name: 合包 + 签名
         if: steps.check.outputs.skip == 'false'

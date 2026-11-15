@@ -45,7 +45,10 @@ check_file() { # path, minsize
   else bad "$1 缺失"; fi
 }
 check_file static/lemon/payload.json 100
-check_file static/libmain/libmain.so 100000
+# libmain 双件：stub 装到 lib/arm64-v8a/libmain.so（约 10KB），DMM 原版备份为 static/lemon/libmain-dmm.so（约 1.27MB）
+# 旧阈值 100000 会把 10KB 的 stub 直接判 FAIL 拦死合包，故拆成两条分级校验
+check_file static/libmain/libmain.so 5000
+check_file static/lemon/libmain-dmm.so 1000000
 check_file static/float/classes.dex 100000
 check_file static/float/classes2.dex 100000
 for so in libandroidrepublic.so libemtandroidrepublic.so libemtandroidrepublic2.so libxg4.so; do
@@ -62,7 +65,6 @@ echo "  interop 程序集数量: $(ls "$REPO/static/lemon/runtime/interop" 2>/de
 echo
 
 echo "-- 签名材料 --"
--- 签名材料 --
 KS="$REPO/keystore/tsk_fixed.keystore"
 if [ -f "$KS" ]; then
   ok "keystore 存在"
