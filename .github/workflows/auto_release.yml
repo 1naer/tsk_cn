@@ -226,7 +226,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          OUT="dist/TSK_${VER}_cn_float.apk"
+          OUT="dist/TSK_${VER}_cn.apk"
           python3 scripts/02_assemble.py work/official.apk "$OUT"
           ls -l "$OUT"
 
@@ -245,6 +245,6 @@ jobs:
 
             安装前请先卸载旧版（或同证书直接覆盖安装）。
           files: |
-            dist/TSK_*_cn_float.apk
+            dist/TSK_*_cn.apk
           generate_release_notes: true
           fail_on_unmatched_files: true

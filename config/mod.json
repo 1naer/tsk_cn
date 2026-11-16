@@ -52,7 +52,8 @@
     "interop_generated_dir": "work/interop"
   },
   "float_window": {
-    "_comment": "ARTEAM 悬浮窗。dex 放 smali_classes3，so 放 lib/arm64-v8a，入口在 UnityPlayerActivity.onCreate 尾部延迟 6 秒调用。",
+    "_comment": "ARTEAM 悬浮窗。enabled=false 时整套注入链（dex/native/patchelf/Activity入口/SYSTEM_ALERT_WINDOW 权限）全部跳过，产出纯汉化包。悬浮窗资源文件保留在 static/float 下，仅不注入，便于随时切回。",
+    "enabled": false,
     "dex_dir": "static/float",
     "dex_files": ["classes.dex", "classes2.dex", "classes3.dex"],
     "native_dir": "static/float/lib/arm64-v8a",
@@ -86,7 +87,7 @@
   },
   "output": {
     "dir": "dist",
-    "name_template": "TSK_{version}_cn_float.apk",
+    "name_template": "TSK_{version}_cn.apk",
     "report": "dist/build_report.json"
   }
 }

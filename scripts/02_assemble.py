@@ -8,14 +8,18 @@
 
 流程:
    1. 解包官方 APK（保留原始结构）
-   2. 注入 LemonLoader 静态层到 assets/LemonLoader
-   3. 加入 ARTEAM 悬浮窗 dex（classes3.dex 等，攻击条UI主体）
-   4. 加入悬浮窗 native 库到 lib/{abi}/
-   5. patchelf 给 libunity.so 添加 DT_NEEDED（唤醒悬浮窗）
-   6. baksmali 反编译 → 注入 UnityPlayerActivity.onCreate 启动入口（KonataInit.init）
-   7. axml_patch.py 修补二进制 AndroidManifest，加 SYSTEM_ALERT_WINDOW 权限
-   8. 用 zip_pack.py 精确打包
-   9. zipalign + apksigner 签名
+   2. 注入 LemonLoader 静态层到 assets/LemonLoader（汉化本体，必需）
+   3. [悬浮窗] 加入 ARTEAM 悬浮窗 dex（classes3.dex 等，攻击条UI主体）
+   4. [悬浮窗] 加入悬浮窗 native 库到 lib/{abi}/
+   5. [悬浮窗] patchelf 给 libunity.so 添加 DT_NEEDED（唤醒悬浮窗）
+   6. [悬浮窗] baksmali 反编译 → 注入 UnityPlayerActivity.onCreate 启动入口（KonataInit.init）
+   7. [悬浮窗] axml_patch.py 修补二进制 AndroidManifest，加 SYSTEM_ALERT_WINDOW 权限
+   8. 出厂自检（纯汉化模式下额外做悬浮窗残留反向校验）
+   9. 用 zip_pack.py 精确打包
+  10. zipalign + apksigner 签名
+
+   标 [悬浮窗] 的步骤受 config/mod.json 的 float_window.enabled 控制：
+   enabled=false 时全部跳过，产出纯汉化包（默认）。
 
 用法:
     python3 scripts/02_assemble.py <官方APK> <输出APK> [--skip-sign]
@@ -34,11 +38,21 @@ import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(REPO, "config", "mod.json")
-
 PERMISSION = 'android.permission.SYSTEM_ALERT_WINDOW'
 
 
+def float_enabled(cfg: dict) -> bool:
+    """悬浮窗总开关。config/mod.json 的 float_window.enabled=false => 纯汉化包。
+
+    关闭时整套注入链全部跳过：
+      inject_float_window / patch_libunity / inject_activity_entry / patch_manifest_binary
+    以及 verify_unpacked 中依赖悬浮窗的两项自检。
+    """
+    return bool(cfg.get("float_window", {}).get("enabled", True))
+
+
 def run(cmd, check=True, capture=False):
+
     """执行命令"""
     print(f"  $ {' '.join(cmd)}" if isinstance(cmd, list) else f"  $ {cmd}")
     if capture:
@@ -482,14 +496,17 @@ def sign_apk(apk_path: str, signing_cfg: dict, skip_sign: bool):
         print(f"  [WARN] 签名验证未通过: {r.stderr}")
 
 
-def verify_unpacked(dest: str, cfg: dict, abi: str):
+def verify_unpacked(dest: str, cfg: dict, abi: str, with_float: bool = True):
     """出厂自检：确保装载链三要素正确，不合格直接拒绝打包。
 
     校验项：
       1) lib/{abi}/libmain.so 是 stub（约 10KB，非 DMM 原版 ~1.27MB）
       2) assets/LemonLoader/libmain.so 是 DMM 原版（~1.27MB）
-      3) lib/{abi}/libunity.so 的动态段含全部 add_needed
-      4) 悬浮窗 native 库齐全
+      3) LemonLoader 静态层完整（payload.json / runtime / deployment）
+      4) with_float=True 时额外校验悬浮窗注入链：
+         libunity DT_NEEDED 完整、悬浮窗 native 库齐全
+      5) with_float=False 时做纯净性反向校验：
+         不得残留悬浮窗 dex / native 库 / KonataInit 入口
     """
     print(f"\n== 出厂自检 ==")
     ok = True
@@ -522,17 +539,23 @@ def verify_unpacked(dest: str, cfg: dict, abi: str):
         print(f"  [FAIL] 缺少 assets/LemonLoader/libmain.so")
         ok = False
 
-    # 3) libunity 的 DT_NEEDED
-    add_needed = cfg["patch_libs"].get("add_needed", [])
-    libunity = os.path.join(dest, cfg["patch_libs"]["target"])
-    if os.path.isfile(libunity) and add_needed:
-        rd = run(["readelf", "-d", libunity], capture=True, check=False)
-        missing = [lib for lib in add_needed if lib not in rd.stdout]
-        if missing:
-            print(f"  [FAIL] libunity DT_NEEDED 缺少: {missing}")
-            ok = False
-        else:
-            print(f"  [OK] libunity DT_NEEDED 完整: {add_needed}")
+    # 3) libunity DT_NEEDED / 悬浮窗 native 库（仅悬浮窗模式校验）
+    if with_float:
+        add_needed = cfg["patch_libs"].get("add_needed", [])
+        libunity = os.path.join(dest, cfg["patch_libs"]["target"])
+        if os.path.isfile(libunity) and add_needed:
+            rd = run(["readelf", "-d", libunity], capture=True, check=False)
+            missing = [lib for lib in add_needed if lib not in rd.stdout]
+            if missing:
+                print(f"  [FAIL] libunity DT_NEEDED 缺少: {missing}")
+                ok = False
+            else:
+                print(f"  [OK] libunity DT_NEEDED 完整: {add_needed}")
+
+        for so in cfg["float_window"].get("native_files", []):
+            if not os.path.isfile(os.path.join(dest, "lib", abi, so)):
+                print(f"  [FAIL] 悬浮窗 native 库缺失: {so}")
+                ok = False
 
     # 4) LemonLoader 静态层完整性（缺任一 => 汉化运行时无法启动，必然静默不生效）
     lemon_cfg = cfg["lemon"]
@@ -567,11 +590,34 @@ def verify_unpacked(dest: str, cfg: dict, abi: str):
         else:
             print(f"  [OK] assets/LemonLoader/{rel} ({n_packed} 个文件)")
 
-    # 5) 悬浮窗 native 库
-    for so in cfg["float_window"].get("native_files", []):
-        if not os.path.isfile(os.path.join(dest, "lib", abi, so)):
-            print(f"  [FAIL] 悬浮窗 native 库缺失: {so}")
-            ok = False
+    # 5) 纯汉化模式：反向纯净性校验，确保悬浮窗链一点残留都没有
+    if not with_float:
+        # 5.1 悬浮窗 native 库不得出现
+        for so in cfg["float_window"].get("native_files", []):
+            p = os.path.join(dest, "lib", abi, so)
+            if os.path.isfile(p):
+                print(f"  [FAIL] 纯汉化模式残留悬浮窗 native 库: {so}")
+                ok = False
+        # 5.2 libunity DT_NEEDED 不得含悬浮窗库
+        add_needed = cfg["patch_libs"].get("add_needed", [])
+        libunity = os.path.join(dest, cfg["patch_libs"]["target"])
+        if os.path.isfile(libunity) and add_needed:
+            rd = run(["readelf", "-d", libunity], capture=True, check=False)
+            leaked = [lib for lib in add_needed if lib in rd.stdout]
+            if leaked:
+                print(f"  [FAIL] 纯汉化模式 libunity 仍挂 DT_NEEDED: {leaked}")
+                ok = False
+            else:
+                print(f"  [OK] libunity 未挂悬浮窗 DT_NEEDED（纯汉化）")
+        # 5.3 dex 中不得残留悬浮窗桥接类 / KonataInit 入口
+        for f in os.listdir(dest):
+            if f.startswith("classes") and f.endswith(".dex"):
+                p = os.path.join(dest, f)
+                r = subprocess.run(["grep", "-qa", "KonataInit", p], capture_output=True)
+                if r.returncode == 0:
+                    print(f"  [FAIL] 纯汉化模式 {f} 仍含 KonataInit 入口")
+                    ok = False
+        print(f"  [OK] 纯汉化纯净性校验完成（无悬浮窗残留）")
 
     if not ok:
         print("\n[FAIL] 出厂自检未通过，已中止打包（避免产出崩溃/功能缺失包）")
@@ -606,11 +652,13 @@ def main():
 
     cfg = json.load(open(CONFIG, encoding="utf-8"))
     abi = cfg["game"]["abi"]
+    with_float = float_enabled(cfg)
 
     print("== 02_assemble ==")
     print(f"输入 APK: {apk_path}")
     print(f"输出 APK: {output_apk}")
     print(f"架构    : {abi}")
+    print(f"模式    : {'汉化 + ARTEAM 悬浮窗' if with_float else '纯汉化（悬浮窗已关闭）'}")
 
     if not os.path.isfile(apk_path):
         print(f"[FAIL] 输入 APK 不存在: {apk_path}")
@@ -622,22 +670,27 @@ def main():
     # 1. 解包
     unpack_apk(apk_path, unpack_dir)
 
-    # 2. 注入 LemonLoader
+    # 2. 注入 LemonLoader（汉化必需，任何模式都必须执行）
     inject_lemon(unpack_dir, cfg["lemon"])
 
-    # 3. 注入悬浮窗
-    inject_float_window(unpack_dir, cfg["float_window"], abi)
+    if with_float:
+        # 3. 注入悬浮窗
+        inject_float_window(unpack_dir, cfg["float_window"], abi)
 
-    # 4. patchelf 修补 libunity.so
-    patch_libunity(unpack_dir, cfg["patch_libs"], abi)
+        # 4. patchelf 修补 libunity.so（建立 DT_NEEDED 链唤醒悬浮窗）
+        patch_libunity(unpack_dir, cfg["patch_libs"], abi)
 
-    # 4.5 注入 Activity 启动入口（UnityPlayerActivity.onCreate → KonataInit.init）
-    inject_activity_entry(unpack_dir)
+        # 4.5 注入 Activity 启动入口（UnityPlayerActivity.onCreate → KonataInit.init）
+        inject_activity_entry(unpack_dir)
 
-    # 5. 修补 manifest
-    patch_manifest_binary(unpack_dir)
+        # 5. 修补 manifest（加入 SYSTEM_ALERT_WINDOW，悬浮窗需要）
+        patch_manifest_binary(unpack_dir)
+    else:
+        print("\n== 悬浮窗已关闭（float_window.enabled=false）==")
+        print("  跳过: 悬浮窗 dex/native 注入、libunity patchelf、Activity 入口、SYSTEM_ALERT_WINDOW 权限")
+
     # 5.5 出厂自检（不合格直接拒绝打包，避免产出崩溃/功能缺失包）
-    verify_unpacked(unpack_dir, cfg, abi)
+    verify_unpacked(unpack_dir, cfg, abi, with_float)
     # 6. 打包
     print(f"\n== 打包 APK ==")
     run([sys.executable, os.path.join(REPO, "scripts", "zip_pack.py"), unpack_dir, output_apk])
@@ -646,12 +699,19 @@ def main():
     sign_apk(output_apk, cfg["signing"], skip_sign)
 
     # 生成构建报告
+    components = ["LemonLoader"]
+    if with_float:
+        components += ["ARTEAM悬浮窗(全量DEX)", "libunity patched", "Activity启动入口(KonataInit)", "SYSTEM_ALERT_WINDOW权限"]
+    else:
+        components += ["纯汉化(无悬浮窗)"]
+
     report = {
         "output": output_apk,
         "size": os.path.getsize(output_apk),
         "source_apk": apk_path,
         "abi": abi,
-        "components": ["LemonLoader", "ARTEAM悬浮窗(全量DEX)", "libunity patched", "Activity启动入口(KonataInit)", "SYSTEM_ALERT_WINDOW权限"],
+        "float_window": with_float,
+        "components": components,
         "signed": not skip_sign,
     }
     report_path = os.path.join(REPO, "dist", "build_report.json")
