@@ -166,29 +166,28 @@ def inject_lemon(dest: str, lemon_cfg: dict):
     count = len(os.listdir(interop_dst))
     print(f"  已注入 interop ({count} 个 DLL, 来源={interop_tag})")
 
-    # 注入 stub libmain → lib/{abi}/libmain.so（装载链入口：启动 .NET 运行时）
-    # 说明：LemonLoader 机制要求 APK 的 lib/ 下是 stub，真正的 DMM libmain 放 assets/LemonLoader/。
-    #       两者若放反，会出现 .NET 化 il2cpp 无运行时装载 → /memfd:doublemapper 空指针 SIGSEGV。
+    # 覆盖 lib/{abi}/libmain.so ← LemonLoader host（装载链入口，启动 .NET 运行时）
+    # 官方金标准（sources/base_v01.03.12_6f9f3f72.apk）：修补包唯一的 libmain 就是
+    #   lib/arm64-v8a/libmain.so = 1272968 字节的 LemonLoader host（MD5 dbfd43f5…），
+    #   游戏原版 10416 小壳已被顶替、包内不再保留，assets/ 下也没有 libmain.so。
+    #   历史错误：曾把 10416 小壳当成「stub」装到 lib/、把 host 塞进 assets/LemonLoader/，
+    #   导致系统加载的是原版小壳 → LemonLoader 从未被拉起 → 无弹窗、汉化静默失效。
     libmain_src = os.path.join(REPO, lemon_cfg["libmain"])
     libmain_apk_dest = lemon_cfg.get("apk_libmain_dest", "lib/arm64-v8a/libmain.so")
     libmain_apk_path = os.path.join(dest, libmain_apk_dest)
     if os.path.isfile(libmain_src):
         os.makedirs(os.path.dirname(libmain_apk_path), exist_ok=True)
         shutil.copy2(libmain_src, libmain_apk_path)
-        print(f"  已安装 stub libmain → {libmain_apk_dest} ({os.path.getsize(libmain_src):,} 字节)")
+        print(f"  已覆盖 libmain → {libmain_apk_dest} ({os.path.getsize(libmain_src):,} 字节, LemonLoader host)")
     else:
-        print(f"[FAIL] stub libmain 缺失: {libmain_src}（装载链入口，无法自动从官方包取得）")
+        print(f"[FAIL] LemonLoader host 缺失: {libmain_src}（装载链入口，无法自动从官方包取得）")
         sys.exit(1)
 
-    # 挪入真实 DMM libmain → assets/LemonLoader/libmain.so（供 stub 运行时装载）
-    if lemon_cfg.get("libmain_dmm"):
-        dmm_src = os.path.join(REPO, lemon_cfg["libmain_dmm"])
-        if os.path.isfile(dmm_src):
-            shutil.copy2(dmm_src, os.path.join(target, "libmain.so"))
-            print(f"  已挪入 DMM libmain → assets/LemonLoader/libmain.so ({os.path.getsize(dmm_src):,} 字节)")
-        else:
-            print(f"[FAIL] DMM libmain 缺失: {dmm_src}")
-            sys.exit(1)
+    # 清理历史误放：assets/LemonLoader/libmain.so 必须不存在（官方规范该位置无此文件）
+    stray_asset_libmain = os.path.join(target, "libmain.so")
+    if os.path.isfile(stray_asset_libmain):
+        os.remove(stray_asset_libmain)
+        print("  已清理历史误放: assets/LemonLoader/libmain.so")
 
 
 def inject_float_window(dest: str, float_cfg: dict, abi: str):
@@ -499,9 +498,9 @@ def sign_apk(apk_path: str, signing_cfg: dict, skip_sign: bool):
 def verify_unpacked(dest: str, cfg: dict, abi: str, with_float: bool = True):
     """出厂自检：确保装载链三要素正确，不合格直接拒绝打包。
 
-    校验项：
-      1) lib/{abi}/libmain.so 是 stub（约 10KB，非 DMM 原版 ~1.27MB）
-      2) assets/LemonLoader/libmain.so 是 DMM 原版（~1.27MB）
+    校检项：
+      1) lib/{abi}/libmain.so 是 LemonLoader host（~1.27MB，内含 .NET 加载壳）
+      2) assets/LemonLoader/libmain.so 必须不存在（官方规范不放此文件）
       3) LemonLoader 静态层完整（payload.json / runtime / deployment）
       4) with_float=True 时额外校验悬浮窗注入链：
          libunity DT_NEEDED 完整、悬浮窗 native 库齐全
@@ -511,33 +510,28 @@ def verify_unpacked(dest: str, cfg: dict, abi: str, with_float: bool = True):
     print(f"\n== 出厂自检 ==")
     ok = True
 
-    stub_src = os.path.join(REPO, cfg["lemon"]["libmain"])
-    dmm_src = os.path.join(REPO, cfg["lemon"].get("libmain_dmm", ""))
+    host_src = os.path.join(REPO, cfg["lemon"]["libmain"])
 
-    lib_stub = os.path.join(dest, "lib", abi, "libmain.so")
-    asset_dmm = os.path.join(dest, "assets", "LemonLoader", "libmain.so")
+    lib_host = os.path.join(dest, "lib", abi, "libmain.so")
+    asset_libmain = os.path.join(dest, "assets", "LemonLoader", "libmain.so")
 
-    # 1) lib/ 下 libmain 应与仓库 stub 完全一致
-    if os.path.isfile(lib_stub) and os.path.isfile(stub_src):
-        if files_equal(lib_stub, stub_src):
-            print(f"  [OK] lib/{abi}/libmain.so == stub ({os.path.getsize(lib_stub):,} 字节)")
+    # 1) lib/ 下 libmain 必须与仓库 LemonLoader host 完全一致
+    if os.path.isfile(lib_host) and os.path.isfile(host_src):
+        if files_equal(lib_host, host_src):
+            print(f"  [OK] lib/{abi}/libmain.so == LemonLoader host ({os.path.getsize(lib_host):,} 字节)")
         else:
-            print(f"  [FAIL] lib/{abi}/libmain.so 与 stub 不一致（装载链位置可能放反）")
+            print(f"  [FAIL] lib/{abi}/libmain.so 与 LemonLoader host 不一致（装载链入口可能放错）")
             ok = False
     else:
         print(f"  [FAIL] 缺少 lib/{abi}/libmain.so")
         ok = False
 
-    # 2) assets/LemonLoader/libmain.so 应与 DMM 原版一致
-    if os.path.isfile(asset_dmm) and dmm_src and os.path.isfile(dmm_src):
-        if files_equal(asset_dmm, dmm_src):
-            print(f"  [OK] assets/LemonLoader/libmain.so == DMM 原版 ({os.path.getsize(asset_dmm):,} 字节)")
-        else:
-            print(f"  [FAIL] assets/LemonLoader/libmain.so 与 DMM 原版不一致")
-            ok = False
-    else:
-        print(f"  [FAIL] 缺少 assets/LemonLoader/libmain.so")
+    # 2) assets/LemonLoader/libmain.so 不得存在（官方规范：该位置无此文件）
+    if os.path.isfile(asset_libmain):
+        print(f"  [FAIL] assets/LemonLoader/libmain.so 不应存在（官方规范该位置无 libmain）")
         ok = False
+    else:
+        print(f"  [OK] assets/LemonLoader/ 下无 libmain.so（符合官方规范）")
 
     # 3) libunity DT_NEEDED / 悬浮窗 native 库（仅悬浮窗模式校验）
     if with_float:

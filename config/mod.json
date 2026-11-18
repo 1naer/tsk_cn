@@ -42,10 +42,11 @@
     "min_type_hit_ratio": 0.85
   },
   "lemon": {
+    "_comment": "libmain 规范（以官方已修补底包 base_v01.03.12 为金标准）：APK 的 lib/{abi}/libmain.so 直接放 LemonLoader host（1272968 字节，内含 .NET 化加载壳，MD5 dbfd43f5…）；assets/LemonLoader/ 下只放 payload.json + runtime/ + deployment/，不放 libmain.so。游戏原版小壳（10416 字节，MD5 0ebd55e7…）在修补包中已被 host 顶替、不再保留，备份见 libmain_stock_backup。",
     "static_dir": "static/lemon",
     "payload": "static/lemon/payload.json",
     "libmain": "static/libmain/libmain.so",
-    "libmain_dmm": "static/lemon/libmain-dmm.so",
+    "libmain_stock_backup": "static/libmain/libmain-original-stock.so",
     "apk_libmain_dest": "lib/arm64-v8a/libmain.so",
     "apk_asset_dest": "assets/LemonLoader",
     "interop_dir": "static/lemon/runtime/interop",
@@ -71,7 +72,7 @@
     "do_not_declare_service": true
   },
   "patch_libs": {
-    "_comment": "通过 DT_NEEDED 链式挂载唤醒悬浮窗。注意：libmain.so 会被 LemonLoader stub 接管（stub 装到 lib/arm64-v8a/libmain.so，DMM 原版备份为 assets/LemonLoader/libmain.so），stub 再依 payload.json 拉起 .NET 运行时加载 TSKHook 汉化。因此 libmain.so 属于「必须替换」而非禁止替换。",
+    "_comment": "通过 DT_NEEDED 链式挂载唤醒悬浮窗。注意：lib/arm64-v8a/libmain.so 会被 LemonLoader host 顶替（1272968 字节的加载壳装到该路径，原版 10416 小壳不再保留），host 再依 payload.json 拉起 .NET 运行时加载 TSKHook 汉化。因此 libmain.so 属于「必须替换」而非禁止替换。",
     "target": "lib/arm64-v8a/libunity.so",
     "add_needed": ["libxg4.so", "libandroidrepublic.so"]
   },

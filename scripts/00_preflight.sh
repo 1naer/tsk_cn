@@ -45,10 +45,12 @@ check_file() { # path, minsize
   else bad "$1 缺失"; fi
 }
 check_file static/lemon/payload.json 100
-# libmain 双件：stub 装到 lib/arm64-v8a/libmain.so（约 10KB），DMM 原版备份为 static/lemon/libmain-dmm.so（约 1.27MB）
-# 旧阈值 100000 会把 10KB 的 stub 直接判 FAIL 拦死合包，故拆成两条分级校验
-check_file static/libmain/libmain.so 5000
-check_file static/lemon/libmain-dmm.so 1000000
+# libmain 规范（以官方已修补底包 base_v01.03.12_6f9f3f72.apk 为金标准）：
+#   - lib/arm64-v8a/libmain.so 直接由 LemonLoader host（约 1.27MB）顶替，全包仅此一处 libmain.so
+#   - assets/LemonLoader/ 下不放 libmain.so
+#   - 游戏原版 10KB 小壳被移除，仅在仓库留档为 static/libmain/libmain-original-stock.so（不参与合包）
+check_file static/libmain/libmain.so 1000000
+check_file static/libmain/libmain-original-stock.so 5000
 check_file static/float/classes.dex 100000
 check_file static/float/classes2.dex 100000
 for so in libandroidrepublic.so libemtandroidrepublic.so libemtandroidrepublic2.so libxg4.so; do
